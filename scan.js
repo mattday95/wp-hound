@@ -4,6 +4,20 @@ const chalk = require('chalk');
 const fs = require('fs').promises;
 
 (async () => {
+  try {
+    await fs.access('./sites.json');
+  } catch (error) {
+    console.error(chalk.red('Error: sites.json not found.'));
+    return;
+  }
+
+  try {
+    await fs.access('./data');
+  } catch (error) {
+    console.log(chalk.yellow('Creating data directory...'));
+    await fs.mkdir('./data');
+  }
+  
   const siteData = await fs.readFile('./sites.json');
   const sites = JSON.parse(siteData);
 
