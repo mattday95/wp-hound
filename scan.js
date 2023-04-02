@@ -2,6 +2,14 @@ const puppeteer = require('puppeteer');
 const Table = require('cli-table');
 const chalk = require('chalk');
 const fs = require('fs').promises;
+const winston = require('winston');
+const { combine, timestamp, printf } = winston.format;
+const path = require('path');
+
+// Define log format
+const logFormat = printf(({ level, message, timestamp }) => {
+  return `${timestamp} [${level.toUpperCase()}] ${message}`;
+});
 
 (async () => {
   try {
@@ -17,40 +25,58 @@ const fs = require('fs').promises;
     console.log(chalk.yellow('Creating data directory...'));
     await fs.mkdir('./data');
   }
-  
+
+  try {
+    await fs.access('./logs');
+  } catch (error) {
+    console.log(chalk.yellow('Creating logs directory...'));
+    await fs.mkdir('./logs');
+  }
+
   const siteData = await fs.readFile('./sites.json');
   const sites = JSON.parse(siteData);
 
   for (const { admin_url, is_bedrock, username, password } of sites) {
     const siteDomain = new URL(admin_url).hostname;
     const adminSlug = is_bedrock ? 'wp/wp-admin' : 'wp-admin';
+    const logFileName = `${siteDomain}-${Date.now()}.log`;
+    const logFilePath = path.join(__dirname, 'logs', logFileName);
+
+    // Create logger
+    const logger = winston.createLogger({
+      level: 'info',
+      format: combine(timestamp(), logFormat),
+      transports: [
+        new winston.transports.File({ filename: logFilePath }),
+      ],
+    });
 
     const browser = await puppeteer.launch();
     const page = await browser.newPage();
 
     try {
-      await loginToWordPressAdmin(page, admin_url, username, password, siteDomain);
-      await handleEmailVerification(page);
-      const plugins = await getPluginsData(page);
-      await displayPluginTable(plugins);
-      await savePluginDataToFile(plugins, siteDomain);
+      await loginToWordPressAdmin(page, admin_url, username, password, siteDomain, logger);
+      await handleEmailVerification(page, logger);
+      const plugins = await getPluginsData(page, logger);
+      await displayPluginTable(plugins, logger);
+      await savePluginDataToFile(plugins, siteDomain, logger);
     } catch (error) {
-      console.error(chalk.red(`Error processing ${siteDomain}: ${error}`));
+      logger.error(chalk.red(`Error processing ${siteDomain}: ${error}`));
     } finally {
       await browser.close();
     }
   }
 })();
 
-const loginToWordPressAdmin = async (page, admin_url, username, password, siteDomain) => {
-  console.log(chalk.green('Navigating to WordPress login...'));
+const loginToWordPressAdmin = async (page, admin_url, username, password, siteDomain, logger) => {
+  logger.info('Navigating to WordPress login...');
   await page.goto(admin_url);
   await page.waitForSelector('#user_login');
   await page.focus('#user_login');
   await page.evaluate((username) => { (document.getElementById('user_login')).value = username; }, username);
   await page.focus('#user_pass');
   await page.evaluate((password) => { (document.getElementById('user_pass')).value = password; }, password);
-  console.log(chalk.green(`Logging in to ${siteDomain}...`));
+  logger.info(`Logging in to ${siteDomain}...`);
   await Promise.all([
     page.click('#wp-submit'),
     page.waitForNavigation()
@@ -58,24 +84,25 @@ const loginToWordPressAdmin = async (page, admin_url, username, password, siteDo
 
   if (await page.$('#login_error')) {
     throw new Error('Login unsuccessful.');
+    logger.error('Login unsuccessful.');
   }
 };
 
-const handleEmailVerification = async (page) => {
+const handleEmailVerification = async (page, logger) => {
   const verifyEmailBtn = await page.$('form.admin-email-confirm-form .admin-email__actions-secondary > a');
   if (verifyEmailBtn) {
-    console.log(chalk.green('Email verification required. Clicking "remind me later" button...'));
+    logger.info('Email verification required. Clicking "remind me later" button...');
     await verifyEmailBtn.click();
     await page.waitForNavigation();
   }
 };
 
-const getPluginsData = async (page) => {
-  console.log(chalk.green('Heading to plugins page...'));
+const getPluginsData = async (page, logger) => {
+  logger.info('Heading to plugins page...');
   await page.click(`#menu-plugins`);
   await page.waitForNavigation();
 
-  console.log(chalk.green('Parsing plugins...'));
+  logger.info('Parsing plugins...');
   const plugins = await page.$$('table.plugins tr');
   const pluginData = [];
 
@@ -100,7 +127,7 @@ const getPluginsData = async (page) => {
   return pluginData;
 };
 
-const displayPluginTable = async (plugins) => {
+const displayPluginTable = async (plugins, logger) => {
   const table = new Table({
     head: ['Plugin', 'Version', 'Status'],
   });
@@ -113,11 +140,11 @@ const displayPluginTable = async (plugins) => {
   console.log(table.toString());
 };
 
-const savePluginDataToFile = async (pluginData,siteDomain) => {
+const savePluginDataToFile = async (pluginData,siteDomain,logger) => {
   const json = JSON.stringify(pluginData, null, 2);
   const fileName = `${siteDomain}.json`;
   await fs.writeFile(`./data/${fileName}`, json);
-  console.log(`Plugin data saved to ${fileName}`);
+  logger.info(`Plugin data saved to ${fileName}`);
 };
 
 const getVersionNumber = (versionText) => {
