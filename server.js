@@ -13,7 +13,6 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.post('/scan', async (req, res) => {
   const clientIp = req.ip;
   const allowedIps = process.env.ALLOWED_IPS.split(',');
-  const plugins = await initScan(req.body);
   
   if (allowedIps.includes(clientIp)) {
     const plugins = await initScan(req.body);
