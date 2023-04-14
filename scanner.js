@@ -1,7 +1,7 @@
 const puppeteer = require('puppeteer');
 const Table = require('cli-table');
 const chalk = require('chalk');
-const fs = require('fs').promises;
+const fs = require('fs');
 const winston = require('winston');
 const { combine, timestamp, printf } = winston.format;
 const path = require('path');
@@ -13,41 +13,53 @@ const logFormat = printf(({ level, message, timestamp }) => {
 
 const createRequiredDirectories = async () => {
   try {
-    await fs.access('./data');
+    await fs.promises.access('./data');
   } catch (error) {
     console.log(chalk.yellow('Creating data directory...'));
-    await fs.mkdir('./data');
+    await fs.promises.mkdir('./data');
   }
 
   try {
-    await fs.access('./logs');
+    await fs.promises.access('./logs');
   } catch (error) {
     console.log(chalk.yellow('Creating global logs directory...'));
-    await fs.mkdir('./logs');
+    await fs.promises.mkdir('./logs');
   }
 }
 
-module.exports = runScan = async (data) => {
+module.exports = initScan = async (data) => {
 
   await createRequiredDirectories();
   const {admin_url, is_bedrock, username, password } = data;
   const siteDomain = new URL(admin_url).hostname;
   const adminSlug = is_bedrock ? 'wp/wp-admin' : 'wp-admin';
 
-  let response = [];
+  let plugins = [];
 
   try {
-    await fs.access(`./logs/${siteDomain}`);
+    await fs.promises.access(`./logs/${siteDomain}`);
   } catch (error) {
     console.log(chalk.yellow(`Creating logs directory for ${siteDomain}...`));
-    await fs.mkdir(`./logs/${siteDomain}`);
+    await fs.promises.mkdir(`./logs/${siteDomain}`);
   }
 
   try {
-    await fs.access(`./data/${siteDomain}`);
+    await fs.promises.access(`./data/${siteDomain}`);
   } catch (error) {
     console.log(chalk.yellow(`Creating data directory for ${siteDomain}...`));
-    await fs.mkdir(`./data/${siteDomain}`);
+    await fs.promises.mkdir(`./data/${siteDomain}`);
+  }
+
+  const oneWeekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000); // 7 days in milliseconds
+  const files = fs.readdirSync(`./data/${siteDomain}`);
+  const existingFile = files.find(file => {
+    const fileTimestamp = file.slice(0, 13);
+    return fileTimestamp >= oneWeekAgo;
+  });
+  
+  if (existingFile) {
+    const data = fs.readFileSync(`./data/${siteDomain}/${existingFile}`);
+    return JSON.parse(data);
   }
 
   const logFileName = `${Date.now()}.log`;
@@ -68,14 +80,14 @@ module.exports = runScan = async (data) => {
   try {
     await loginToWordPressAdmin(page, admin_url, username, password, siteDomain, logger);
     await handleEmailVerification(page, logger);
-    const plugins = await getPluginsData(page, logger);
-    await displayPluginTable(plugins, logger);
-    response = await savePluginDataToFile(plugins, siteDomain, logger);
+    plugins = await getPluginsData(page, logger);
+    // await displayPluginTable(plugins, logger);
+    await savePluginDataToFile(plugins, siteDomain, logger);
   } catch (error) {
     logger.error(chalk.red(`Error processing ${siteDomain}: ${error}`));
   } finally {
     await browser.close();
-    return response;
+    return plugins;
   }
 };
 
@@ -138,24 +150,23 @@ const getPluginsData = async (page, logger) => {
   return pluginData;
 };
 
-const displayPluginTable = async (plugins, logger) => {
-  const table = new Table({
-    head: ['Plugin', 'Version', 'Status'],
-  });
+// const displayPluginTable = async (plugins, logger) => {
+//   const table = new Table({
+//     head: ['Plugin', 'Version', 'Status'],
+//   });
 
-  for (const plugin of plugins) {
-    const status = plugin.activated ? chalk.green('●') : chalk.red('●');
-    table.push([plugin.title, plugin.version, status]);
-  }
-  // console.log(table.toString());
-};
+//   for (const plugin of plugins) {
+//     const status = plugin.activated ? chalk.green('●') : chalk.red('●');
+//     table.push([plugin.title, plugin.version, status]);
+//   }
+//   // console.log(table.toString());
+// };
 
 const savePluginDataToFile = async (pluginData,siteDomain,logger) => {
   const json = JSON.stringify(pluginData, null, 2);
   const fileName = `${Date.now()}.json`;
-  await fs.writeFile(`./data/${siteDomain}/${fileName}`, json);
+  await fs.promises.writeFile(`./data/${siteDomain}/${fileName}`, json);
   logger.info(`Plugin data saved to ${fileName}`);
-  return pluginData;
 };
 
 const getVersionNumber = (versionText) => {
