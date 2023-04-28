@@ -74,7 +74,11 @@ module.exports = initScan = async (data) => {
     ],
   });
 
-  const browser = await puppeteer.launch();
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', "--disabled-setupid-sandbox", "--disable-gpu"],
+    ignoreDefaultArgs: ["--disable-extensions"]
+  });
   const page = await browser.newPage();
 
   try {
@@ -109,6 +113,12 @@ const loginToWordPressAdmin = async (page, admin_url, username, password, siteDo
     throw new Error('Login unsuccessful.');
     logger.error('Login unsuccessful.');
   }
+
+  const currentUrl = await page.url();
+
+  if (!currentUrl.includes('/wp-admin/')) {
+    await page.goto(admin_url);
+  }
 };
 
 const handleEmailVerification = async (page, logger) => {
@@ -141,7 +151,8 @@ const getPluginsData = async (page, logger) => {
         const versionText = await (await versionElement.getProperty('innerText')).jsonValue();
         const version = getVersionNumber(versionText);
         const deactivateElement = await plugin.$('td.plugin-title span.deactivate');
-        const activated = deactivateElement !== null;
+        const networkActivated = await plugin.$('td.plugin-title span.network_active');
+        const activated = deactivateElement !== null || networkActivated !== null;
         pluginData.push({ title, version, activated });
       }
     }
